@@ -1,0 +1,107 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers
+import matplotlib.pyplot as plt
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import os
+
+# Cargar dataset de arte
+# Supón que ya tienes imágenes en una carpeta local "dataset" o usa un dataset como WikiArt
+
+# Crear generador de imágenes (GAN)
+def build_generator(z_dim):
+    model = tf.keras.Sequential()
+    model.add(layers.Dense(128 * 8 * 8, activation="relu", input_dim=z_dim))
+    model.add(layers.Reshape((8, 8, 128)))
+    model.add(layers.Conv2DTranspose(128, kernel_size=4, strides=2, padding="same", activation="relu"))
+    model.add(layers.Conv2DTranspose(64, kernel_size=4, strides=2, padding="same", activation="relu"))
+    model.add(layers.Conv2DTranspose(32, kernel_size=4, strides=2, padding="same", activation="relu"))
+    model.add(layers.Conv2DTranspose(16, kernel_size=4, strides=2, padding="same", activation="relu"))
+    model.add(layers.Conv2D(3, kernel_size=7, activation="tanh", padding="same"))
+    return model
+
+# Crear discriminador de imágenes (GAN)
+def build_discriminator(img_shape):
+    model = tf.keras.Sequential()
+    model.add(layers.Conv2D(64, kernel_size=4, strides=2, padding="same", input_shape=img_shape))
+    model.add(layers.LeakyReLU(0.2))
+    model.add(layers.Conv2D(128, kernel_size=4, strides=2, padding="same"))
+    model.add(layers.LeakyReLU(0.2))
+    model.add(layers.Conv2D(256, kernel_size=4, strides=2, padding="same"))
+    model.add(layers.LeakyReLU(0.2))
+    model.add(layers.Conv2D(512, kernel_size=4, strides=2, padding="same"))
+    model.add(layers.LeakyReLU(0.2))
+    model.add(layers.Flatten())
+    model.add(layers.Dense(1, activation="sigmoid"))
+    return model
+
+# Definir las dimensiones de entrada
+z_dim = 100  # El vector de ruido para generar arte
+img_shape = (64, 64, 3)  # Imagen de 64x64 píxeles con 3 canales (RGB)
+
+# Compilar discriminador y generador
+generator = build_generator(z_dim)
+discriminator = build_discriminator(img_shape)
+
+discriminator.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# Bloquear los pesos del discriminador para el entrenamiento del GAN
+discriminator.trainable = False
+
+# Crear el GAN (modelo combinado)
+z = layers.Input(shape=(z_dim,))
+img = generator(z)
+validity = discriminator(img)
+
+combined = tf.keras.Model(z, validity)
+combined.compile(loss='binary_crossentropy', optimizer='adam')
+
+# Función para entrenar el GAN
+def train_gan(epochs, batch_size, z_dim, dataset):
+    batch_count = dataset.shape[0] // batch_size
+    for epoch in range(epochs):
+        for _ in range(batch_count):
+            # Seleccionar un lote aleatorio de imágenes reales
+            idx = np.random.randint(0, dataset.shape[0], batch_size)
+            real_images = dataset[idx]
+            real_labels = np.ones((batch_size, 1))
+
+            # Generar un lote de imágenes falsas
+            noise = np.random.normal(0, 1, (batch_size, z_dim))
+            fake_images = generator.predict(noise)
+            fake_labels = np.zeros((batch_size, 1))
+
+            # Entrenar el discriminador (real/falso)
+            d_loss_real = discriminator.train_on_batch(real_images, real_labels)
+            d_loss_fake = discriminator.train_on_batch(fake_images, fake_labels)
+            d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+            # Entrenar el generador (intentar engañar al discriminador)
+            noise = np.random.normal(0, 1, (batch_size, z_dim))
+            g_loss = combined.train_on_batch(noise, np.ones((batch_size, 1)))
+
+        # Mostrar el progreso
+        print(f"{epoch}/{epochs} | D Loss: {d_loss[0]} | G Loss: {g_loss}")
+
+        # Guardar las imágenes generadas cada 100 épocas
+        if epoch % 100 == 0:
+            plot_generated_images(epoch, generator)
+
+# Función para visualizar imágenes generadas
+def plot_generated_images(epoch, generator, examples=10, dim=(1, 10), figsize=(10, 1)):
+    noise = np.random.normal(0, 1, (examples, z_dim))
+    generated_images = generator.predict(noise)
+    plt.figure(figsize=figsize)
+    for i in range(examples):
+        plt.subplot(dim[0], dim[1], i + 1)
+        plt.imshow(generated_images[i])
+        plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(f"generated_images_{epoch}.png")
+    plt.close()
+
+# Cargar dataset de imágenes de arte (tú puedes usar cualquier conjunto de datos de imágenes)
+# dataset = load_your_art_images()
+
+# Entrenar GAN
+train_gan(epochs=10000, batch_size=64, z_dim=z_dim, dataset=dataset)
